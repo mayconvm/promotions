@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
-	telegram "bot-telegram/src/pkg/telegram"
+	"bot-telegram/src/internal/domain"
+	supabase "bot-telegram/src/pkg/supabase"
+	"bot-telegram/src/pkg/telegram"
 
 	"github.com/go-faster/errors"
 	"github.com/gotd/td/tg"
@@ -18,27 +21,12 @@ func main() {
 		panic(err)
 	}
 
-	client := telegram.ClientTelegram()
+	sessionProductsToSearch := make(chan []domain.Product)
 
+	client := telegram.ClientTelegram()
 	if err := client.Run(context.Background(), func(ctx context.Context) error {
 		// authenticate user
 		telegram.AuthTelegram(client, ctx)
-
-		// It is only valid to use client while this function is not returned
-		// and ctx is not cancelled.
-
-		// Getting info about current user.
-		self, err := client.Self(ctx)
-		if err != nil {
-			return errors.Wrap(err, "call self")
-		}
-
-		name := self.FirstName
-		if self.Username != "" {
-			// Username is optional.
-			name = fmt.Sprintf("%s (@%s)", name, self.Username)
-		}
-		fmt.Println("Current user:", name)
 
 		raw := tg.NewClient(client)
 		listChannels, err := telegram.ListChannelsFromFolders(ctx, raw, 4)
@@ -46,16 +34,56 @@ func main() {
 			return errors.Wrap(err, "list channels from folder")
 		}
 
-		for _, channel := range listChannels {
-			if err := telegram.SearchProductInChannel(ctx, raw, channel, "SSD"); err != nil {
-				return errors.Wrap(err, "search product in channel")
-			}
+		go searchProductsInChannels(sessionProductsToSearch, listChannels, ctx, raw)
+
+		if err := ListAllProducts(sessionProductsToSearch); err != nil {
+			panic(err)
 		}
+
+		time.Sleep(10 * time.Second)
+		close(sessionProductsToSearch)
 
 		// Return to close client connection and free up resources.
 		return nil
 	}); err != nil {
 		panic(err)
 	}
+
+	// inicia a connecção com o telegram e registra goroutines para buscar os produtos no telegram
+	// 	criar um canal para executar a busca
+	// Iniciar o cronjob e registrar as sessions
+	// 	a cada execução, publicar os produtos a serem pesquisados nos canais
+
 	// Client is closed.
+}
+
+func searchProductsInChannels(list chan []domain.Product, listChannels []*tg.InputPeerChannel, ctx context.Context, raw *tg.Client) {
+
+	itemsProducts := <-list
+
+	for _, channel := range listChannels {
+		if err := telegram.SearchProductInChannel(ctx, raw, channel, itemsProducts[1].Name); err != nil {
+			fmt.Print(errors.Wrap(err, "search product in channel"))
+		}
+	}
+}
+
+func ListAllProducts(channel chan []domain.Product) error {
+	client, err := supabase.NewClient()
+	if err != nil {
+		return errors.Wrap(err, "error connect supabase")
+	}
+
+	listProducts, err := supabase.GetAllProducts(client, &domain.Session{SessionId: "bac"})
+	if err != nil {
+		return errors.Wrap(err, "error connect supabase")
+	}
+
+	channel <- listProducts
+
+	for _, product := range listProducts {
+		println("Product:", product.ProductID, product.Title)
+	}
+
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -78,13 +79,13 @@ func AuthTelegram(client *telegram.Client, ctx context.Context) {
 }
 
 func SearchProductInChannel(ctx context.Context, raw *tg.Client, targetPeer *tg.InputPeerChannel, productName string) error {
-	fmt.Printf("\n=== Searching for product: %s - %d ===\n", productName, targetPeer.ChannelID)
+	fmt.Printf("\n=== Searching for product: %s - %d - %d ===\n", productName, targetPeer.ChannelID, targetPeer.AccessHash)
 	// Perform the search
 	results, err := raw.MessagesSearch(ctx, &tg.MessagesSearchRequest{
-		Peer:    targetPeer,
-		Q:       productName,
+		Peer: targetPeer,
+		// Q:       productName,
 		Filter:  &tg.InputMessagesFilterEmpty{},             // Necessário para buscar todos os tipos de mensagem
-		Limit:   2,                                          // Limitar resultados
+		Limit:   20,                                         // Limitar resultados
 		MinDate: int(time.Now().Add(-2 * time.Hour).Unix()), // últimas duas horas
 	})
 	if err != nil {
@@ -97,20 +98,29 @@ func SearchProductInChannel(ctx context.Context, raw *tg.Client, targetPeer *tg.
 		fmt.Printf("✅ Encontrado %d mensagens:\n", len(msgs.Messages))
 		for i, msg := range msgs.Messages {
 			if message, ok := msg.(*tg.Message); ok {
+				if !filterProductsByName(message, productName) {
+					continue
+				}
+
 				fmt.Printf("🔍 [%d] %s\n", i+1, message.Message)
 				if message.Date > 0 {
 					fmt.Printf("    📅 Data: %d\n", message.Date)
 				}
 				fmt.Println()
+
 			}
+
 		}
 	case *tg.MessagesMessagesSlice:
 		fmt.Printf("✅ Encontrado %d de %d mensagens:\n", len(msgs.Messages), msgs.Count)
 		for i, msg := range msgs.Messages {
 			if message, ok := msg.(*tg.Message); ok {
+				if !filterProductsByName(message, productName) {
+					continue
+				}
 				fmt.Printf("🔍 [%d] %s\n", i+1, message.Message)
 				if message.Date > 0 {
-					fmt.Printf("    � Data: %d\n", message.Date)
+					fmt.Printf("    📅 Data: %d\n", message.Date)
 				}
 				fmt.Println()
 			}
@@ -119,6 +129,10 @@ func SearchProductInChannel(ctx context.Context, raw *tg.Client, targetPeer *tg.
 		fmt.Printf("✅ Encontrado %d de %d mensagens no canal:\n", len(msgs.Messages), msgs.Count)
 		for i, msg := range msgs.Messages {
 			if message, ok := msg.(*tg.Message); ok {
+				if !filterProductsByName(message, productName) {
+					continue
+				}
+
 				fmt.Printf("🔍 [%d] %s\n", i+1, message.Message)
 				if message.Date > 0 {
 					fmt.Printf("    📅 Data: %d\n", message.Date)
@@ -131,6 +145,11 @@ func SearchProductInChannel(ctx context.Context, raw *tg.Client, targetPeer *tg.
 	}
 
 	return nil
+}
+
+func filterProductsByName(message *tg.Message, regexProduct string) bool {
+	match, _ := regexp.MatchString(regexProduct, message.Message)
+	return match
 }
 
 func ListChannelsFromFolders(ctx context.Context, raw *tg.Client, folderID int) ([]*tg.InputPeerChannel, error) {
